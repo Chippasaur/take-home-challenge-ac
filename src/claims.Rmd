@@ -1,0 +1,323 @@
+---
+title: "Claims Take Home Challenge"
+author: "Alvin Chung"
+date: '2022-10-13'
+output:
+  html_document: default
+---
+
+```{r setup, include=FALSE, warning = FALSE, echo = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library("tidyverse")
+library("janitor")
+library("esquisse")
+library("ggforce")
+library("performance")
+library("correlation")
+library("see")
+library("caret")
+library("rattle")
+library("RColorBrewer")
+library("hrbrthemes")
+library("forcats")
+library("scales")
+library("knitr")
+
+
+df <- read.csv("./data/flight_delays_data.csv", stringsAsFactors=T)
+df <- drop_na(df)
+
+
+df <- slice_sample(df, prop = 1)
+
+
+df <- df %>% 
+  mutate(
+    is_claim = ifelse(is_claim == 800, TRUE, FALSE),
+    std_hour = as.double(df$std_hour),
+    is_cancelled = ifelse(delay_time == "Cancelled", TRUE, FALSE)
+  ) 
+
+```
+
+# Background
+The business team has asked you to identify the factors that attribute to a low-risk or high-risk flight, so that they can offer different price points to customers based on their risk profiles. 
+
+
+As a travel insurance company, flight delay claim is one of the popular claim items. The claim logic for flight delay refund in our insurance policy is 
+
+* If the delay time is greater than 3 hours OR the flight is canceled, $800 will be claimed. 
+
+* Otherwise, the claim amount will equal $0. 
+
+The business team wants to determine a pricing model based on the risk of flight delay refund. This means we want to charge 
+
+1. a lower price if a customer takes a low-risk flight, so that the customer is more willing to buy insurance for the flight and hence we can expand the risk pool. 
+
+2. a higher price if a customer takes a high-risk flight, so that the customer is less willing to buy insurance for the flight and hence we naturally screen out the high-risk customer and adequately compensate the risk the company needs to take. 
+
+
+
+
+
+
+# Executive Summary
+
+## Highlight
+
+Based on our analysis we have determined the following factors to be most significant in predicting "low-risk" and "high risk flights":
+
+**Significant Factors** 
+```{r, echo = FALSE}
+tibble(rank = c(1, 2, 3), 
+       factor = c("Airline", "Standard Hour", "Arrival")
+       ) %>% kable(align = "ll")
+
+```
+
+**Propose Drop Factors (insignificant)**
+
+```{r, echo = FALSE}
+tibble(rank = c(1, 2, 3, 4), 
+       factor = c("flight_id", "flight_no", "Departure", "flight_date")
+       ) %>% kable(align = "ll")
+
+```
+
+## Key Findings
+1. **Carrier Risk:** Airline carrier is the most factor in identifying whether a flight will be high or low risk. Our analysis, suggests that a subset carriers are more prone to under-perform and therefore have a high risk of receiving a claim. 
+
+2. **Seasonality:** Our analysis was unable to identify any signs of seasonality that would have resulted in an increased/decrease in claims ratio. As such, changes in supply and demand (peak season) don't have a material impact in increasing claims.
+
+3. **Concentration Risk:** When claims occur, they are often concentrated and are clustered within set intervals
+
+## Recommendations
+1. **Enhanced Monitoring:** We propose that each month Airlines that have a claim ratio above 90% be placed on an enhanced monitoring program, where they are classified as high risk and are required to provide a remediation strategy to reduce their claims ratio. In addition, Airlines with claims below 5% should have their flights classified as low risk, subject to the pricing of the insurance policy. 
+
+2. **Seasonality:** We propose that the business team can exclude seasonal factors to the pricing model, as there is no definitive impact that that seasonality affects claims ratios. However, we do recommend the business unit to monitor behaviors associated with seasonality, as changes in supply and demand are likely to have a meaningful impact on delayed flights in future.
+
+3. **Velocity Rules:** We propose that the business unit should look to include velocity rules into their pricing model. Such that carriers that surpass a threshold in claims ratio within an interval, should have all flights placed on high risk until there is meaningful improvements in claims ratios below a certain threshold.
+
+# Key Findings
+## Objective
+
+### Q1) Is there a correlation between airlines carriers and claims?
+Hypothesis: Do Airlines materially impact claims ratios? We widely read about different Airlines and their impact towards customer experiences. This often is due to operational failure. Hence, we believe that the Airline itself plays a critical roles in determining claims.
+
+**Highlight:**
+
+1. Our analysis indicates that Airlines play a significant role in determining whether a claim will occur. 
+
+2. Our analysis indicates that there may be material deficiencies in airlines operations that result in high claims for the bottom 5 carriers. In addition, we note that the top performing carriers, (low claims) have strong track records that enable the majority of flights to be classified as low risk.
+
+3. High risk carriers have flights that are often sparse and are low in frequency. This suggests that they are not major carriers that. Hence the business unit, may look to consider non-major carriers to have higher risk in their pricing models. 
+
+3.We propose that the business unit should place a threshold of under performing carriers into high risk for all flights, and the top performing carriers into low risk based on our analysis on claims ratios.
+
+
+
+```{r, echo=FALSE}
+
+# Top performing flights
+top_flights <- df %>% 
+  filter(Airline %in% c("CX", "OZ", "NZ", "MH", "JL", "GK", "GA", "BX")) %>% 
+  group_by(Airline, is_claim) %>% 
+  count() %>% 
+  group_by(Airline) %>% 
+  mutate(percent = n/sum(n)) 
+  
+
+top_flights %>% 
+  filter(is_claim == TRUE) %>% 
+  ggplot() + 
+  geom_bar(aes(x =Airline, y = percent), stat = "identity") + 
+  theme_ipsum() + 
+  scale_fill_grey() +
+  labs(title = "Top Performing Carriers", 
+       subtitle = "By Claims Ratio", 
+       y = "Claims Ratio (%)", 
+       x = "Airline Carrier") + 
+  scale_y_continuous(labels = label_percent())
+```
+
+```{r, echo=FALSE}
+
+
+worst_flights <- df %>% 
+  filter(Airline %in% c("SV", "BO", "HB", "P7", "O3")) %>% 
+  group_by(Airline, is_claim) %>% 
+  count() %>% 
+  group_by(Airline) %>% 
+  mutate(percent = n/sum(n)) 
+
+
+worst_flights %>% 
+  filter(is_claim == TRUE) %>% 
+  ggplot() + 
+  geom_bar(aes(x =Airline, y = percent), stat = "identity") + 
+  theme_ipsum() + 
+  scale_fill_grey() +
+  labs(title = "Worst Performing Carriers", 
+       subtitle = "By Claims Ratio", 
+       y = "Claims Ratio (%)", 
+       x = "Airline Carrier") + 
+  scale_y_continuous(labels = label_percent())
+
+```
+
+
+
+
+
+**Hypothesis Test**
+
+
+$H_0: p_{i j}=p_{i \bullet} p_{\bullet} j, \quad i=1,2 ; j=1,2 \text { vs } H_1 \text { : Not all equalities hold. }$
+
+
+Ho: There is no difference in claims ratios based on Airline Carrier
+
+Ha: There is a statistical difference in claims ratios based on Airline Carrier
+
+**Assumption**
+
+$e_{i j}=y_{i \bullet} y_{\bullet j} / n \geq 5$
+
+**Test Statistics**
+$T=\sum_{i=1}^2 \sum_{j=1}^2 \frac{\left(Y_{i j}-e_{i j}\right)^2}{e_{i j}} \text {. Under } H_0, T \sim \chi_1^2 \text { approx. }$
+
+**Observed Test Statistic**
+$t_0=\sum_{i=1}^2 \sum_{j=1}^2 \frac{\left(y_{i j}-y_{i \bullet} y_{\bullet j} / n\right)^2}{y_{i \bullet} y_{\bullet j} / n}$
+
+**Decision**
+```{r, warning=FALSE}
+
+#df %>% 
+#  tabyl(Airline, is_claim) %>% 
+#  adorn_percentages("row") %>% 
+#  adorn_pct_formatting(digits = 1)  %>% 
+#  adorn_ns() %>% 
+#  arrange(desc("FALSE"))
+
+df %>% 
+  tabyl(Airline, is_claim) %>% 
+  chisq.test()
+
+```
+Here, we reject Ho for the alternative as $P<=(0.05)$ which suggests that there is a significant difference in claims ratio vs Airline Carrier. In addition, through a further pairwise test we have identified the following carriers above to be high/low risk.
+
+
+
+
+
+
+
+### Q2) Do certain periods of the year result higher/lower claims ratios?
+
+**Hypothesis**
+Our assumption here is that as demand increases, there would be a reduction in available docking units for Airlines. As a result, flight would be more prone towards delays during peak seasons.
+
+
+**Highlight:**
+
+1. Our analysis indicates clear seasonal behaviors in flight bookings. Such that, there is a clear trend in increases and decreases in booking pattern throughout the year.
+
+2. However, our analysis shows that there is no clear pattern between flights bookings to claim ratios. In addition, it appears that the ratios of claims evenly distributed throughout the year. This indicates that there is insufficient evidence to prove our assumption, and that there are no clear signs that increases in demand result in higher frequencies of delayed flights (resulting in claims).
+
+```{r}
+df %>% 
+  select(Week, is_claim) %>% 
+  group_by(Week, is_claim) %>% 
+  count() %>% 
+  ggplot(aes(x = Week, y = n)) + geom_smooth(aes(color = is_claim)) + 
+  geom_point() +
+  labs(title = "Number of Flights occured", 
+       subtitle = "By Weeks", 
+       y = "Number of Flights", 
+       x = "Weeks in a Year") + 
+  theme_ipsum()
+```
+
+
+```{r}
+
+df %>% 
+  select(Week, is_claim) %>% 
+  group_by(Week, is_claim) %>% 
+  count() %>% 
+  group_by(Week) %>% 
+  mutate(percent = n/sum(n)) %>% 
+  ggplot(aes(x = Week, y = percent)) + geom_smooth(aes(color = is_claim)) + 
+  geom_point()  +
+  labs(title = "Claim Ratios for Flights", 
+       subtitle = "By Weeks", 
+       y = "Ratio of Claims per Week", 
+       x = "Weeks in a Year") + 
+  theme_ipsum()
+```
+
+
+**Decision**
+```{r}
+df %>% 
+  select(Week, is_claim) %>% 
+  t.test()
+```
+
+Based on a t-test, we determine that there is at least one week, where the claims ratio had a statistical difference from the mean. However, through further discovery and analysis we determined that there was inconclusive evidence of clear correlation between weeks in a year and claims ratio. As such, although we reject Ho for the alternative, We have concluded that we are unable to reject Ho as there is no clear behaviour that would allow us to difference low vs high risk flights.
+
+
+### Q3) What factors often result in claims? Do claims randomly occur? or are the concentrated due to certain macro driven events?
+
+**Hypothesis:**
+
+What factors are most significant in predicting claims? In addition, Claims may often arise due to operational failure. As such, Do claims most frequently occur within set intervals?
+
+**Highlights**
+
+1. Our analysis indicates that the strongest predictors of claims is as follows:
+```{r, echo = FALSE}
+tibble(rank = c(1, 2, 3), 
+       factor = c("Airline", "Standard Hour", "Arrival")
+       ) %>% kable(align = "ll")
+
+```
+
+2. Claims exhibit high levels of concentration within set intervals. This indicates that claims are most often event driven, and and limited towards a set time-frame. e.g. Systems failures that may result in Airlines to be unable to onboard customers.
+
+```{r, echo=FALSE}
+df1 <- slice_sample(df, prop = 0.1)
+# train the model on training set
+model <- train(as.factor(is_claim) ~ std_hour + Airline,
+               data = df1,
+               method = "rpart")
+
+model
+```
+
+```{r}
+
+fancyRpartPlot(model$finalModel)
+```
+
+**Decision**
+
+Based on our analysis through fitting a decision tree, we were able to determine that the following 3 features were significant in predicting claims. In addition, we note that the majority of claims are concentrated within certain clusters and time intervals. As such, we propose that the business unit look to leverage these features as part of their pricing model in order to identify low/high risk flights.
+
+```{r, echo = FALSE}
+tibble(rank = c(1, 2, 3), 
+       factor = c("Airline", "Standard Hour", "Arrival")
+       ) %>% kable(align = "ll")
+
+```
+
+
+## Points of consideration in future
+
+1. **Simpson's Paradox:** There is a chance that claims may risk the behaviors associated with the Simpson paradox. As the attributes that result in a flight delay can often be  different from a cancellation, it may be more appropriate to model each outcome separately and aggregate it into one model. Hence, in future we could look at using mixed models to idenfity patterns and behaviours across these two segments.
+
+2. **Colinerarity** There may be possible colinerarity between delay time and standard hours. As such, we could look to perform further analysis to see which is more appropriate and understand the potential dependencies between the two factors
+
+3. **Cluster Analysis**: We should work with the business unit to understand the reasons associated with these clusters of significant spikes in claims. It may allow us to further improve and identify information we should collect to further improve our pricing model.
+
+
